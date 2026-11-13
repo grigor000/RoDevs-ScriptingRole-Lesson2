@@ -1,0 +1,53 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local ServerModules = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Server")
+
+local DataService = nil
+
+local function loadModulesInFolder(folder)
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("ModuleScript") then
+			local success, module = pcall(require, child)
+
+			if success then
+				if child.Name == "DataService" then
+					DataService = module
+				end
+
+				if type(module) == "table" and typeof(module.Init) == "function" then
+					local initSuccess, err = pcall(module.Init)
+					if not initSuccess then
+						warn("[Server Loader]: Failed to initialize module " .. child.Name .. ": " .. tostring(err))
+					end
+				end
+			else
+				warn("[Server Loader]: Failed to require module " .. child.Name .. ": " .. tostring(module))
+			end
+		elseif child:IsA("Folder") then
+			loadModulesInFolder(child)
+		end
+	end
+end
+
+loadModulesInFolder(ServerModules)
+print("[Server]: All core services successfully started!")
+
+game:BindToClose(function()
+	local playersToSave = Players:GetPlayers()
+	if #playersToSave == 0 or not DataService then
+		return
+	end
+
+	print("[Server]: Server shutting down! Saving remaining active player data...")
+
+	for _, player in ipairs(playersToSave) do
+		task.spawn(function()
+			local pData = DataService.GetPlayerObject(player)
+			if pData and typeof(pData.SaveData) == "function" then
+				pData:SaveData()
+			end
+		end)
+	end
+
+	task.wait(2)
+end)
