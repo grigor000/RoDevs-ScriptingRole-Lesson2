@@ -1,0 +1,242 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local ServerModules = ReplicatedStorage.Modules.Server
+local DataService = require(ServerModules.PlayerDataService.DataService)
+local CarSettingsConfig = require(ServerModules.ConfigurationService.CarSettingsService)
+local FriendService = require(ServerModules.PlayerDataService.FriendService)
+local AnimationService = require(ServerModules.UploadService.AnimationService)
+local AutoServiceManager = require(ServerModules.AutoService.CarAutoServiceManager)
+
+local SoundEventRequest = ReplicatedStorage:WaitForChild("Events"):WaitForChild("SoundService"):WaitForChild("PlayClientSound")
+local SyncCarState = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CarService"):WaitForChild("SyncCarService")
+
+local CarManagerService = {}
+
+local CARS_FOLDER = ReplicatedStorage:WaitForChild("Models"):WaitForChild("Cars")
+local activePumps = {}
+local occupiedPumps = {}
+
+local function setCarCollision(carModel, canCollide)
+	for _, part in ipairs(carModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = canCollide
+			part.CanTouch = canCollide 
+			part.CanQuery = canCollide
+		end
+	end
+end
+
+local function getRandomCarModel()
+	local availableCars = CARS_FOLDER:GetChildren()
+	if #availableCars == 0 then return nil end
+
+	local totalChance = 0
+	local carChances = {}
+
+	for _, car in ipairs(availableCars) do
+		local config = CarSettingsConfig.GetCarData(car.Name)
+		totalChance += config.SpawnChance
+		table.insert(carChances, {Model = car, Chance = config.SpawnChance})
+	end
+
+	if totalChance <= 0 then
+		return availableCars[math.random(#availableCars)]
+	end
+
+	local roll = math.random() * totalChance
+	local current = 0
+
+	for _, data in ipairs(carChances) do
+		current += data.Chance
+		if roll <= current then
+			return data.Model
+		end
+	end
+
+	return availableCars[#availableCars]
+end
+
+local function generateRandomPlate()
+	local allowedLetters = {
+		"A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "O",
+		"N", "P", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+	}
+
+	local function getUniqueLetters(count)
+		local chosen = {}
+		local result = {}
+		while #result < count do
+			local index = math.random(#allowedLetters)
+			local letter = allowedLetters[index]
+			if not chosen[letter] then
+				chosen[letter] = true
+				table.insert(result, letter)
+			end
+		end
+		return result
+	end
+
+	local function getNum() return tostring(math.random(0, 9)) end
+
+	local letters = getUniqueLetters(3)
+	return letters[1] .. letters[2] .. "-" .. getNum() .. getNum() .. getNum() .. "-" .. letters[3]
+end
+
+local function getPumpLevel(player, pumpModel)
+	local pData = DataService.GetPlayerObject(player)
+	if not pData then return 1 end
+
+	local purchasedList = pData:Get("PurchasedButtons") or {}
+	local pumpId = string.gsub(pumpModel.Name, "Built_", "")
+	pumpId = string.gsub(pumpId, "Purchase", "")
+
+	local savedLevel = purchasedList[pumpId] or 1
+	return math.max(1, savedLevel)
+end
+
+function CarManagerService.ServiceCar(player, pumpModel, carClone)
+	local carConfig = CarSettingsConfig.GetCarData(carClone.Name)
+	if not carConfig then return end
+
+	local CFrames = pumpModel:FindFirstChild("CFrames")
+	if not CFrames then return end
+
+	local endPart = CFrames:FindFirstChild("End")
+	if not endPart then return end
+
+	local pData = DataService.GetPlayerObject(player)
+	if pData then
+		local liveLevel = getPumpLevel(player, pumpModel)
+		local multiplier = CarSettingsConfig.PumpLevelMultipliers[liveLevel] or 1.0
+		local finalReward = math.round(carConfig.BaseReward * multiplier)
+
+		SoundEventRequest:FireClient(player, "Earn")
+		pData:Add("Dollars", finalReward)
+	end
+
+	SyncCarState:FireAllClients(carClone, "DespawnToEnd", endPart)
+	task.wait(1.75)
+
+	carClone:Destroy()
+	occupiedPumps[pumpModel] = nil
+end
+
+function CarManagerService.ManagePumpLine(player, pumpModel)
+	if activePumps[pumpModel] then return end
+	activePumps[pumpModel] = true
+
+	local globals = CarSettingsConfig.GlobalSettings
+
+	while pumpModel and pumpModel.Parent and player and player.Parent do
+		if occupiedPumps[pumpModel] then
+			task.wait(1)
+			continue
+		end
+
+		local CFrames = pumpModel:FindFirstChild("CFrames")
+		if not CFrames then break end
+
+		local spawnPart = CFrames:FindFirstChild("Start")
+		local queuePart = CFrames:FindFirstChild("Queue")
+		local endPart = CFrames:FindFirstChild("End")
+
+		if not spawnPart or not queuePart or not endPart then break end
+
+		local currentLevel = getPumpLevel(player, pumpModel)
+		local delayMultiplier = CarSettingsConfig.PumpSpawnDelayMultipliers[currentLevel] or 1.0
+		local finalMin = globals.MinSpawnDelay * delayMultiplier
+		local finalMax = globals.MaxSpawnDelay * delayMultiplier
+
+		task.wait(math.random(finalMin, finalMax))
+
+		if not player.Parent or not pumpModel.Parent or occupiedPumps[pumpModel] then continue end
+
+		local carTemplate = getRandomCarModel()
+		if not carTemplate then break end
+
+		local carClone = carTemplate:Clone()
+		if carClone.PrimaryPart then
+			carClone.PrimaryPart.Anchored = true
+		end
+
+		carClone:PivotTo(spawnPart.CFrame)
+
+		local CarColorPart = carClone:FindFirstChild("CarColorPart")
+		if CarColorPart then CarColorPart.Color = Color3.fromRGB(math.random(0, 255), math.random(0, 255), math.random(0, 255)) end
+		local NumberPlate = carClone:FindFirstChild("NumberPlate")
+		if NumberPlate then
+			local SurfaceGui = NumberPlate:FindFirstChildOfClass("SurfaceGui") or Instance.new("SurfaceGui")
+			SurfaceGui.Face = Enum.NormalId.Front; SurfaceGui.Parent = NumberPlate
+			local Frame = SurfaceGui:FindFirstChild("PlateFrame") or Instance.new("Frame")
+			Frame.Name = "PlateFrame"; Frame.Size = UDim2.new(1,0,1,0); Frame.BackgroundTransparency = 1; Frame.Parent = SurfaceGui
+			local TextLabel = Frame:FindFirstChildOfClass("TextLabel") or Instance.new("TextLabel")
+			TextLabel.Size = UDim2.new(1,0,1,0); TextLabel.BackgroundTransparency = 1; TextLabel.Font = Enum.Font.SourceSansBold
+			TextLabel.TextScaled = true; TextLabel.TextColor3 = Color3.fromRGB(0,0,0); TextLabel.Text = generateRandomPlate(); TextLabel.Parent = Frame
+		end
+
+		local driverSpawnPos = carClone:FindFirstChild("DriverSpawnPosition")
+		if driverSpawnPos and driverSpawnPos:IsA("BasePart") then
+			local targetUserId = FriendService.GetRandomFriendUserId(player)
+			local driverModel = FriendService.CreateCharacterModel(targetUserId, driverSpawnPos.CFrame)
+			if driverModel then
+				driverModel.Parent = carClone
+				local humanoid = driverModel:FindFirstChildOfClass("Humanoid")
+				local rootPart = driverModel:FindFirstChild("HumanoidRootPart")
+				if humanoid and rootPart then
+					humanoid.Sit = true
+					AnimationService.PlayAnimation(driverModel, "Sit")
+					local weld = Instance.new("WeldConstraint")
+					weld.Part0 = driverSpawnPos; weld.Part1 = rootPart; weld.Parent = rootPart
+				end
+			end
+		end
+
+		carClone.Parent = pumpModel
+		setCarCollision(carClone, false)
+
+		occupiedPumps[pumpModel] = carClone
+
+		SyncCarState:FireAllClients(carClone, "SpawnToQueue", queuePart)
+		task.wait(1.75)
+
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ObjectText = carTemplate.Name
+		prompt.ActionText = "Service Car"
+		prompt.HoldDuration = globals.BaseServiceTime
+		prompt.MaxActivationDistance = 35
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = queuePart
+
+		prompt:SetAttribute("TargetCarTag", carClone.Name)
+
+		local connection
+		connection = prompt.Triggered:Connect(function(triggeringPlayer)
+			if triggeringPlayer == player then
+				if connection then connection:Disconnect() end
+				if prompt and prompt.Parent then prompt:Destroy() end
+				CarManagerService.ServiceCar(player, pumpModel, carClone)
+			end
+		end)
+
+		while occupiedPumps[pumpModel] == carClone do
+			task.wait(0.5)
+		end
+	end
+
+	activePumps[pumpModel] = nil
+end
+
+function CarManagerService.Process(player, spawnedModel)
+	local cframesFolder = spawnedModel:FindFirstChild("CFrames")
+	if cframesFolder and cframesFolder:FindFirstChild("Start") and cframesFolder:FindFirstChild("Queue") then
+		AutoServiceManager.InitService(player, spawnedModel)
+		CarManagerService.ManagePumpLine(player, spawnedModel)
+	end
+end
+
+function CarManagerService.GetActiveCarForPump(pumpModel)
+	return occupiedPumps[pumpModel]
+end
+
+return CarManagerService
