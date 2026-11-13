@@ -1,0 +1,30 @@
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ClientModules = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Client")
+
+local function loadModulesInFolder(folder)
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("ModuleScript") then
+			local success, module = pcall(require, child)
+
+			if success then
+				if type(module) == "table" and typeof(module.Init) == "function" then
+					local initSuccess, err = pcall(module.Init)
+					if not initSuccess then
+						warn("[Client Loader]: Failed to initialize module " .. child.Name .. ": " .. tostring(err))
+					end
+				end
+			else
+				warn("[Client Loader]: Failed to require module " .. child.Name .. ": " .. tostring(module))
+			end
+		elseif child:IsA("Folder") then
+			loadModulesInFolder(child)
+		end
+	end
+end
+
+loadModulesInFolder(ClientModules)
+print("[Client]: All core services successfully started!")
