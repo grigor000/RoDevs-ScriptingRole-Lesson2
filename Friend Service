@@ -1,0 +1,152 @@
+local Players = game:GetService("Players")
+
+local FriendService = {}
+local friendsCache = {}
+
+local ClassicUserIDs = {
+	1,       
+	156,    
+}
+
+local function retryCall(attempts: number, delayTime: number, func)
+	local success, result
+	for i = 1, attempts do
+		success, result = pcall(func)
+		if success then
+			return true, result
+		end
+		if i < attempts then
+			task.wait(delayTime)
+		end
+	end
+	return false, result
+end
+
+function FriendService.GetRandomFriendUserId(player: Player): number
+	if not player or not player.Parent then 
+		return ClassicUserIDs[math.random(1, #ClassicUserIDs)] 
+	end
+
+	if friendsCache[player.UserId] then
+		local cachedList = friendsCache[player.UserId]
+		if #cachedList > 0 then
+			return cachedList[math.random(1, #cachedList)]
+		end
+		return ClassicUserIDs[math.random(1, #ClassicUserIDs)]
+	end
+
+	local friendsList = {}
+
+	local success, friendsPage = retryCall(3, 1, function()
+		return Players:GetFriendsAsync(player.UserId)
+	end)
+
+	if success and friendsPage then
+		local pageSuccess, pageError = pcall(function()
+			while true do
+				for _, friend in ipairs(friendsPage:GetCurrentPage()) do
+					table.insert(friendsList, friend.Id)
+				end
+				if friendsPage.IsFinished then break end
+				friendsPage:AdvanceToNextPageAsync()
+			end
+		end)
+
+		if not pageSuccess then
+			warn("Error iterating friends pages for " .. player.Name .. ": " .. tostring(pageError))
+		end
+
+		friendsCache[player.UserId] = friendsList
+	else
+		warn("Could not fetch friends for player " .. player.Name .. " after retries: " .. tostring(friendsPage))
+	end
+
+	if #friendsList > 0 then
+		return friendsList[math.random(1, #friendsList)]
+	end
+
+	return ClassicUserIDs[math.random(1, #ClassicUserIDs)]
+end
+
+function FriendService.CreateCharacterModel(userId: number, spawnCFrame: CFrame): Model?
+	local characterModel = nil
+	local humanoidDescription = nil
+
+	local humDescSuccess, humDescResult = retryCall(3, 1, function()
+		return Players:GetHumanoidDescriptionFromUserIdAsync(userId)
+	end)
+
+	if humDescSuccess and humDescResult then
+		humanoidDescription = humDescResult
+	else
+		warn("Failed to get HumanoidDescription for userId " .. tostring(userId) .. ", trying fallback model creation...")
+	end
+
+	if humanoidDescription then
+		local modelSuccess, generatedModel = pcall(function()
+			return Players:CreateHumanoidModelFromDescriptionAsync(humanoidDescription, Enum.HumanoidRigType.R6)
+		end)
+
+		if modelSuccess and generatedModel then
+			characterModel = generatedModel
+		end
+	end
+
+	if not characterModel then
+		local fallbackModelSuccess, fallbackModel = retryCall(2, 0.5, function()
+			return Players:CreateHumanoidModelFromUserIdAsync(userId)
+		end)
+
+		if fallbackModelSuccess and fallbackModel then
+			characterModel = fallbackModel
+		end
+	end
+
+	if not characterModel then
+		local finalSuccess, finalModel = pcall(function()
+			return Players:CreateHumanoidModelFromDescriptionAsync(Instance.new("HumanoidDescription"), Enum.HumanoidRigType.R6)
+		end)
+		if finalSuccess then
+			characterModel = finalModel
+		end
+	end
+
+	if characterModel then
+		characterModel.Name = "Driver"
+
+		local humanoid = characterModel:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			if not animator then
+				animator = Instance.new("Animator")
+				animator.Parent = humanoid
+			end
+		end
+
+		characterModel:PivotTo(spawnCFrame)
+
+		local rootPart = characterModel:FindFirstChild("HumanoidRootPart")
+		if rootPart then
+			rootPart.Anchored = false
+		end
+
+		for _, descendant in ipairs(characterModel:GetDescendants()) do
+			if descendant:IsA("BasePart") then
+				descendant.CanCollide = false
+				descendant.CanTouch = false
+				descendant.CanQuery = false
+			end
+		end
+
+		return characterModel
+	end
+
+	warn("Failed to create character model entirely for userId: " .. tostring(userId))
+	return nil
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	friendsCache[player.UserId] = nil
+end)
+
+return FriendService
