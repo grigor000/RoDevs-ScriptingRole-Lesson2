@@ -1,0 +1,50 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TycoonConfig = require(ReplicatedStorage.Modules.Server.TycoonService.TycoonConfig)
+
+local TycoonView = {}
+
+local function formatNumber(value)
+	local formatted = tostring(value)
+	while true do  
+		local k
+		formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+		if k == 0 then break end
+	end
+	return formatted
+end
+
+function TycoonView.CreateBillboard(parentPart, price, displayName)
+	if parentPart:FindFirstChild("ButtonGui") then return end
+
+	local cfg = TycoonConfig.Settings
+
+	local billboardGui = Instance.new("BillboardGui")
+	billboardGui.Name = "ButtonGui"
+	billboardGui.Size = UDim2.new(4, 0, 2.5, 0)
+	billboardGui.StudsOffset = Vector3.new(0, 3, 0)
+	billboardGui.AlwaysOnTop = true
+	billboardGui.MaxDistance = 25
+	billboardGui.LightInfluence = 0
+	billboardGui.Parent = parentPart
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLabel.TextScaled = true
+	textLabel.TextStrokeTransparency = 0.8
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textLabel.FontFace = Font.fromEnum(Enum.Font.Arcade)
+	textLabel.RichText = true
+
+	textLabel.Text = string.format(
+		'<font color="%s"><stroke color="%s" thickness="2">%s</stroke></font><br/>' .. 
+			'<font color="%s"><stroke color="%s" thickness="2">%s%s</stroke></font>',
+		cfg.TextColors.Title, cfg.TextColors.Stroke, displayName, 
+		cfg.TextColors.Price, cfg.TextColors.Stroke, cfg.CurrencySymbol, formatNumber(price)
+	)
+
+	textLabel.Parent = billboardGui
+end
+
+return TycoonView
