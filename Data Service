@@ -1,0 +1,39 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local PlayerData = require(ReplicatedStorage.Modules.Server.PlayerDataService.PlayerData)
+
+local DataService = {}
+local sessionObjects = {}
+
+function DataService.GetPlayerObject(player)
+	return sessionObjects[player]
+end
+
+function DataService.Init()
+	if RunService:IsServer() then
+		local function setupPlayer(player)
+			if sessionObjects[player] then return end
+			sessionObjects[player] = PlayerData.new(player)
+		end
+
+		Players.PlayerAdded:Connect(setupPlayer)
+
+		Players.PlayerRemoving:Connect(function(player)
+			local playerObject = sessionObjects[player]
+			if playerObject then
+				playerObject:Destroy()
+				sessionObjects[player] = nil
+			end
+		end)
+
+		for _, player in ipairs(Players:GetPlayers()) do
+			task.spawn(setupPlayer, player)
+		end
+
+		print("[DataService]: Server data manager initialized.")
+	end
+end
+
+return DataService
