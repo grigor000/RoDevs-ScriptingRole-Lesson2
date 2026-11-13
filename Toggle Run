@@ -1,0 +1,26 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local InputService = require(ReplicatedStorage.Modules.Client.ContextActionService.InputService)
+
+local ToggleSprintEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("PlayerSpeedService"):WaitForChild("ToggleSprint")
+
+local run = {}
+
+function run.Init()
+	local function onSprint(actionName, inputState, inputObject)
+		if inputState == Enum.UserInputState.Begin then
+			ToggleSprintEvent:FireServer(true)
+		elseif inputState == Enum.UserInputState.End then
+			ToggleSprintEvent:FireServer(false)
+		end
+	end
+
+	InputService.CreateBind(
+		"SprintAction",
+		{Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift, Enum.KeyCode.ButtonR1, Enum.KeyCode.ButtonL1},
+		onSprint,
+		true,
+		"Sprint"
+	)
+end
+
+return run
