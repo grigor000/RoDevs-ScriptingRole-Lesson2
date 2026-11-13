@@ -1,0 +1,125 @@
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+
+local InputService = {}
+InputService.__index = InputService
+
+local activeBinds = {}
+local mobileGui: ScreenGui? = nil
+local isMobile = UserInputService.TouchEnabled
+
+function InputService.Init()
+	print("[InputService] Successfully initialized.")
+
+	if isMobile then
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+		mobileGui = Instance.new("ScreenGui")
+		mobileGui.Name = "MobileInputGui"
+		mobileGui.ResetOnSpawn = false
+		mobileGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		mobileGui.Parent = playerGui
+	end
+end
+
+function InputService.CreateBind(
+	actionName: string, 
+	keys, 
+	callback: (string, Enum.UserInputState, InputObject) -> (), 
+	mobileButton: boolean, 
+	buttonTitle: string?,
+	mobilePosition: UDim2?,
+	mobileSize: UDim2?    
+)
+	if activeBinds[actionName] then
+		warn("[InputService] Action '" .. actionName .. "' already exists!")
+		return
+	end
+
+	local function handleAction(name, state, inputObject)
+		if callback then
+			callback(name, state, inputObject)
+		end
+	end
+
+	ContextActionService:BindAction(
+		actionName,
+		handleAction,
+		false,
+		unpack(keys)
+	)
+
+	local createdButton: ImageButton? = nil
+
+	if isMobile and mobileButton and mobileGui then
+		local finalPosition = mobilePosition or UDim2.new(0.8, 0, 0.6, 0)
+		local finalSize = mobileSize or UDim2.new(0.08, 0, 0.14, 0)
+
+		local btn = Instance.new("ImageButton")
+		btn.Name = actionName .. "_Button"
+		btn.Position = finalPosition
+		btn.Size = finalSize
+		btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		btn.BackgroundTransparency = 0.4
+		btn.Image = ""
+		btn.Parent = mobileGui
+
+		local uiCorner = Instance.new("UICorner")
+		uiCorner.CornerRadius = UDim.new(0.5, 0)
+		uiCorner.Parent = btn
+
+		local uiAspectRatio = Instance.new("UIAspectRatioConstraint")
+		uiAspectRatio.AspectRatio = 1
+		uiAspectRatio.Parent = btn
+
+		if buttonTitle then
+			local textLabel = Instance.new("TextLabel")
+			textLabel.Size = UDim2.new(1, 0, 1, 0)
+			textLabel.BackgroundTransparency = 1
+			textLabel.Text = buttonTitle
+			textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			textLabel.Font = Enum.Font.GothamBold
+			textLabel.TextScaled = true
+			textLabel.Parent = btn
+		end
+
+		btn.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				handleAction(actionName, Enum.UserInputState.Begin, input)
+			end
+		end)
+
+		btn.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+				handleAction(actionName, Enum.UserInputState.End, input)
+			end
+		end)
+
+		createdButton = btn
+	end
+
+	activeBinds[actionName] = {
+		Keys = keys,
+		Mobile = mobileButton,
+		ButtonInstance = createdButton
+	}
+
+	print("[InputService] Created bind for action: " .. actionName)
+end
+
+function InputService.Unbind(actionName: string)
+	local bindData = activeBinds[actionName]
+	if bindData then
+		ContextActionService:UnbindAction(actionName)
+
+		if bindData.ButtonInstance then
+			bindData.ButtonInstance:Destroy()
+		end
+
+		activeBinds[actionName] = nil
+		print("[InputService] Action '" .. actionName .. "' has been removed.")
+	end
+end
+
+return InputService
