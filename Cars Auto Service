@@ -1,0 +1,270 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+
+local Server = ReplicatedStorage.Modules.Server
+local DataService = require(Server.PlayerDataService.DataService)
+local TycoonView = require(Server.TycoonService.TycoonView)
+local TycoonConfig = require(Server.TycoonService.TycoonConfig)
+
+local AutoServiceManager = {}
+local CarManagerService = nil 
+
+local COLOR_AFFORDABLE = Color3.fromRGB(0, 255, 127) 
+local COLOR_EXPENSIVE = Color3.fromRGB(255, 85, 85) 
+
+local playerAutoLevels = {}
+local activeAutoButtons = {}
+local activeLoops = {}
+
+local function getMarkerInPlayerTycoon(player, tag)
+	local tycoonModel = workspace.Tycoons:FindFirstChild(player.Name .. "_Tycoon")
+	if not tycoonModel then return nil end
+	local taggedObjects = CollectionService:GetTagged(tag)
+	for _, obj in ipairs(taggedObjects) do
+		if obj:IsA("Model") and obj:IsDescendantOf(tycoonModel) then return obj end
+	end
+	return nil
+end
+
+local function getPlayerMoneyDirect(player)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		local dollarsObject = leaderstats:FindFirstChild("Dollars")
+		if dollarsObject and dollarsObject:IsA("IntValue") then return dollarsObject.Value end
+	end
+	local pData = DataService.GetPlayerObject(player)
+	if pData then return pData:Get("Dollars") or 0 end
+	return 0
+end
+
+local function getAutoConfig(markerTag)
+	local buttonConfig = TycoonConfig.Buttons[markerTag]
+	return buttonConfig and buttonConfig.AutoService or nil
+end
+
+function AutoServiceManager.GetPrice(markerTag, currentLevel)
+	local cfg = getAutoConfig(markerTag)
+	if not cfg then return 0 end
+	local rawPrice = cfg.BasePrice * (cfg.PriceMultiplier ^ currentLevel)
+	return math.round(rawPrice / 100) * 100
+end
+
+function AutoServiceManager.GetDuration(markerTag, currentLevel)
+	local cfg = getAutoConfig(markerTag)
+	if not cfg or currentLevel == 0 then return math.huge end
+	local duration = cfg.BaseDuration * (cfg.SpeedStep ^ (currentLevel - 1))
+	return math.max(cfg.MinDuration, duration)
+end
+
+local function detectMarkerTag(spawnedModelName)
+	local cleanName = string.gsub(spawnedModelName, "Built_", "")
+	if TycoonConfig.Buttons[cleanName] then
+		return cleanName
+	end
+	for buttonId, _ in pairs(TycoonConfig.Buttons) do
+		if string.find(cleanName, buttonId) then
+			return buttonId
+		end
+	end
+	return nil
+end
+
+local function updateButtonColor(player, touchPart, price)
+	if not touchPart or not touchPart.Parent then return end
+	if getPlayerMoneyDirect(player) >= price then touchPart.Color = COLOR_AFFORDABLE else touchPart.Color = COLOR_EXPENSIVE end
+end
+
+function AutoServiceManager.UpdatePlayerButtonsColors(player)
+	local buttons = activeAutoButtons[player]
+	if not buttons then return end
+	for i = #buttons, 1, -1 do
+		local btnData = buttons[i]
+		if btnData.TouchPart and btnData.TouchPart.Parent then
+			updateButtonColor(player, btnData.TouchPart, btnData.GetPriceFunc())
+		else table.remove(buttons, i) end
+	end
+end
+
+function AutoServiceManager.InitService(player, spawnedModel)
+	local markerTag = detectMarkerTag(spawnedModel.Name)
+	if not markerTag then return end
+
+	local cfg = getAutoConfig(markerTag)
+	if not cfg then return end 
+
+	local markerModel = getMarkerInPlayerTycoon(player, markerTag)
+	if not markerModel then return end
+
+	local servicePurchasePart = markerModel:FindFirstChild("ServicePurchasePartPosition")
+	if not servicePurchasePart then return end
+
+	local pData = DataService.GetPlayerObject(player)
+	if not playerAutoLevels[player] then playerAutoLevels[player] = {} end
+	if not activeAutoButtons[player] then activeAutoButtons[player] = {} end
+
+	if pData and not pData.Data["PurchasedButtons"][markerTag .. "_Auto"] then
+		pData.Data["PurchasedButtons"][markerTag .. "_Auto"] = 0
+	end
+
+	local currentLevel = pData and pData.Data["PurchasedButtons"][markerTag .. "_Auto"] or 0
+	playerAutoLevels[player][markerTag] = currentLevel
+
+	-- Проверяем кнопку внутри НОВОЙ модели (там ее гарантированно нет при первом спавне)
+	if spawnedModel:FindFirstChild(markerTag .. "_AutoUpgrade") then return end
+
+	if currentLevel >= 5 then
+		if not activeLoops[player] then activeLoops[player] = {} end
+		if not activeLoops[player][markerTag] then
+			activeLoops[player][markerTag] = true
+			AutoServiceManager.StartAutoLoop(player, spawnedModel.Parent, markerTag)
+		end
+		return
+	end
+
+	local BUTTON_TEMPLATE = ReplicatedStorage:WaitForChild("Models"):WaitForChild("PurchaseButtonTemplate"):WaitForChild("PurchaseButton")
+	local newButton = BUTTON_TEMPLATE:Clone()
+	newButton.Name = markerTag .. "_AutoUpgrade"
+	newButton:PivotTo(servicePurchasePart.CFrame)
+
+	-- Родитель теперь сама модель колонки. При ее удалении (апгрейде) кнопка удалится сама!
+	newButton.Parent = spawnedModel
+
+	local touchPart = newButton:FindFirstChild("TouchPart")
+
+	local function updateButtonVisuals(forcedValue)
+		if not touchPart or not touchPart.Parent then return end
+
+		local lvl = forcedValue or playerAutoLevels[player][markerTag] or 0
+
+		if lvl >= 5 then
+			if newButton then newButton:Destroy() end
+			return
+		end
+
+		local price = AutoServiceManager.GetPrice(markerTag, lvl)
+		local text = ""
+
+		if lvl == 0 then
+			text = string.format("%s", cfg.DisplayName)
+		else
+			local lvlText = (lvl == 4) and "MAX" or tostring(lvl + 1)
+			text = string.format("%s\n[Lv.%s]", cfg.DisplayName, lvlText)
+		end
+
+		local oldBillboard = touchPart:FindFirstChildOfClass("BillboardGui")
+		if oldBillboard then oldBillboard:Destroy() end
+
+		TycoonView.CreateBillboard(touchPart, price, text)
+		updateButtonColor(player, touchPart, price)
+	end
+
+	table.insert(activeAutoButtons[player], {
+		TouchPart = touchPart,
+		GetPriceFunc = function()
+			local lvl = playerAutoLevels[player][markerTag] or 0
+			return AutoServiceManager.GetPrice(markerTag, lvl)
+		end
+	})
+
+	updateButtonVisuals()
+
+	local cooldown = false
+	if touchPart then
+		touchPart.Touched:Connect(function(hit)
+			if cooldown then return end
+			local character = hit.Parent
+			local hitPlayer = game.Players:GetPlayerFromCharacter(character)
+
+			if hitPlayer and hitPlayer == player then
+				local lvl = playerAutoLevels[player][markerTag] or 0
+				if lvl >= 5 then return end
+
+				cooldown = true
+				task.delay(1, function() cooldown = false end)
+
+				local price = AutoServiceManager.GetPrice(markerTag, lvl)
+				local money = getPlayerMoneyDirect(player)
+
+				if money >= price then
+					pData:Add("Dollars", -price)
+
+					lvl = lvl + 1
+					playerAutoLevels[player][markerTag] = lvl
+
+					if pData and pData.Data["PurchasedButtons"] then
+						pData.Data["PurchasedButtons"][markerTag .. "_Auto"] = lvl
+					end
+
+					local PlayPurchaseSound = ReplicatedStorage:WaitForChild("Events"):WaitForChild("SoundService"):WaitForChild("PlayClientSound")
+					PlayPurchaseSound:FireClient(player, "Purchase")
+
+					updateButtonVisuals(lvl)
+
+					if lvl == 1 then
+						if not activeLoops[player] then activeLoops[player] = {} end
+						if not activeLoops[player][markerTag] then
+							activeLoops[player][markerTag] = true
+							AutoServiceManager.StartAutoLoop(player, spawnedModel.Parent, markerTag)
+						end
+					end
+				end
+			end
+		end)
+	end
+
+	if currentLevel > 0 then
+		if not activeLoops[player] then activeLoops[player] = {} end
+		if not activeLoops[player][markerTag] then
+			activeLoops[player][markerTag] = true
+			AutoServiceManager.StartAutoLoop(player, spawnedModel.Parent, markerTag)
+		end
+	end
+end
+
+function AutoServiceManager.StartAutoLoop(player, tycoonModel, markerTag)
+	if not CarManagerService then
+		CarManagerService = require(Server.ConfigurationService.CarManagerService)
+	end
+
+	task.spawn(function()
+		-- Цикл привязан к существованию Тайкуна, а модель колонки находит на лету на каждой итерации
+		while player.Parent and tycoonModel and tycoonModel.Parent do
+			local currentModel = tycoonModel:FindFirstChild("Built_" .. markerTag)
+
+			if currentModel then
+				local cframes = currentModel:FindFirstChild("CFrames")
+				local lvl = playerAutoLevels[player][markerTag] or 0
+
+				if lvl > 0 and cframes then
+					local queuePart = cframes:FindFirstChild("Queue")
+					if queuePart then
+						local activeCar = CarManagerService.GetActiveCarForPump(currentModel)
+						local prompt = queuePart:FindFirstChildOfClass("ProximityPrompt")
+
+						if activeCar and prompt then
+							local duration = AutoServiceManager.GetDuration(markerTag, lvl)
+							task.wait(duration)
+
+							-- Проверяем, существует ли всё ещё колонка (вдруг прямо в эту секунду купили апгрейд)
+							currentModel = tycoonModel:FindFirstChild("Built_" .. markerTag)
+							if currentModel and queuePart and prompt and prompt.Parent and activeCar.Parent then
+								prompt:Destroy()
+								CarManagerService.ServiceCar(player, currentModel, activeCar)
+							end
+						end
+					end
+				end
+			end
+			task.wait(0.2)
+		end
+		if activeLoops[player] then activeLoops[player][markerTag] = nil end
+	end)
+end
+
+function AutoServiceManager.ClearPlayer(player)
+	playerAutoLevels[player] = nil
+	activeAutoButtons[player] = nil
+	activeLoops[player] = nil
+end
+
+return AutoServiceManager
