@@ -1,0 +1,43 @@
+local CollectionService = game:GetService("CollectionService")
+
+local RevenueService = {}
+
+local SUB_MODULES_CONFIG = {
+	["GasPump"] = "CarManagerService",
+}
+
+local loadedModules = {}
+
+local function initializeModules()
+	local configurationServiceFolder = script.Parent
+
+	for tag, moduleName in pairs(SUB_MODULES_CONFIG) do
+		local moduleScript = configurationServiceFolder:FindFirstChild(moduleName)
+		if moduleScript and moduleScript:IsA("ModuleScript") then
+			loadedModules[tag] = require(moduleScript)
+		else
+			warn(string.format("[RevenueService]: Sub-module '%s' for tag '%s' was not found in ConfigurationService folder!", moduleName, tag))
+		end
+	end
+end
+
+initializeModules()
+
+function RevenueService.Init(player, spawnedModel)
+	if not spawnedModel then return end
+
+	for tag, module in pairs(loadedModules) do
+		if CollectionService:HasTag(spawnedModel, tag) then
+			task.spawn(function()
+				local success, err = pcall(function()
+					module.Process(player, spawnedModel)
+				end)
+				if not success then
+					warn(string.format("[RevenueService]: Error executing module %s: %s", tag, tostring(err)))
+				end
+			end)
+		end
+	end
+end
+
+return RevenueService
