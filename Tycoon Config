@@ -1,0 +1,110 @@
+local TycoonConfig = {}
+
+TycoonConfig.Settings = {
+	CurrencySymbol = "$",
+	TextColors = {
+		Title = "rgb(255, 255, 255)", 
+		Price = "rgb(85, 255, 127)",  
+		Stroke = "rgb(0, 0, 0)"      
+	}
+}
+
+TycoonConfig.Buttons = {
+	["GasPump-1"] = { 
+		Price = 100,
+		TargetObject = "MainBuildingGasPump-Lv1", 
+		MarkerTag = "GasPump-1",           
+		DisplayName = "Gas Pump [Lv.1]",
+		LayoutRank = 1,
+		Upgrades = {
+			{ Price = 300, DisplayName = "Gas Pump [Lv.2]", TargetObject = "MainBuildingGasPump-Lv2" },
+			{ Price = 1000, DisplayName = "Gas Pump [Lv.3]", TargetObject = "MainBuildingGasPump-Lv3" },
+			{ Price = 3000, DisplayName = "Gas Pump [MAX]", TargetObject = "MainBuildingGasPump-Lv4" },
+		},
+
+		AutoService = {
+			BasePrice = 500,         
+			PriceMultiplier = 1.4,    
+			BaseDuration = 4,         
+			MinDuration = 1.5,    
+			SpeedStep = 0.8,       
+			DisplayName = "Service"
+		}
+	},
+	["GasPump-2"] = { 
+		Price = 1500,
+		TargetObject = "MainBuildingGasPump-Lv1", 
+		MarkerTag = "GasPump-2",           
+		DisplayName = "Gas Pump",
+		LayoutRank = 2,
+		Upgrades = {
+			{ Price = 2500, DisplayName = "Gas Pump [Lv.2]", TargetObject = "MainBuildingGasPump-Lv2" },
+			{ Price = 4000, DisplayName = "Gas Pump [Lv.3]", TargetObject = "MainBuildingGasPump-Lv3" },
+			{ Price = 6000, DisplayName = "Gas Pump [MAX]", TargetObject = "MainBuildingGasPump-Lv4" },
+		},
+		AutoService = {
+			BasePrice = 1000,         
+			PriceMultiplier = 1.5,    
+			BaseDuration = 4,         
+			MinDuration = 1.5,    
+			SpeedStep = 0.8,       
+			DisplayName = "Service"
+		}
+	},
+	["GasPump-3"] = { 
+		Price = 3000,
+		TargetObject = "MainBuildingGasPump-Lv1", 
+		MarkerTag = "GasPump-3",           
+		DisplayName = "Gas Pump",
+		LayoutRank = 3,
+		Upgrades = {
+			{ Price = 4500, DisplayName = "Gas Pump [Lv.2]", TargetObject = "MainBuildingGasPump-Lv2" },
+			{ Price = 7000, DisplayName = "Gas Pump [Lv.3]", TargetObject = "MainBuildingGasPump-Lv3" },
+			{ Price = 9500, DisplayName = "Gas Pump [MAX]", TargetObject = "MainBuildingGasPump-Lv4" },
+		},
+		AutoService = {
+			BasePrice = 2000,         
+			PriceMultiplier = 1.7,    
+			BaseDuration = 4,         
+			MinDuration = 1.5,    
+			SpeedStep = 0.8,       
+			DisplayName = "Service"
+		}
+	},
+	["GasPump-4"] = { 
+		Price = 5000,
+		TargetObject = "MainBuildingGasPump-Lv1", 
+		MarkerTag = "GasPump-4",           
+		DisplayName = "Gas Pump",
+		LayoutRank = 4,
+		Upgrades = {
+			{ Price = 7500, DisplayName = "Gas Pump [Lv.2]", TargetObject = "MainBuildingGasPump-Lv2" },
+			{ Price = 10000, DisplayName = "Gas Pump [Lv.3]", TargetObject = "MainBuildingGasPump-Lv3" },
+			{ Price = 12000, DisplayName = "Gas Pump [MAX]", TargetObject = "MainBuildingGasPump-Lv4" },
+		},
+		AutoService = {
+			BasePrice = 4000,         
+			PriceMultiplier = 1.95,    
+			BaseDuration = 4,         
+			MinDuration = 1.5,    
+			SpeedStep = 0.8,       
+			DisplayName = "Service"
+		}
+	},
+	["Plate-1"] = {
+		Price = 10000,
+		TargetObject = "MainBuildingPlate-1", 
+		MarkerTag = "Plate-1",           
+		DisplayName = "Plate",
+		LayoutRank = 4,
+	},
+	["Plate-2"] = {
+		Price = 15000,
+		TargetObject = "MainBuildingPlate-2", 
+		MarkerTag = "Plate-2",           
+		DisplayName = "Plate",
+		LayoutRank = 5,
+	},
+}
+
+return TycoonConfig
