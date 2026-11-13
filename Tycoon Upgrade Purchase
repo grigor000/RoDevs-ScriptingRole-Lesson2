@@ -1,0 +1,530 @@
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+
+local Server = ReplicatedStorage.Modules.Server
+
+local DataService = require(Server.PlayerDataService.DataService)
+local TycoonConfig = require(Server.TycoonService.TycoonConfig)
+local TycoonView = require(Server.TycoonService.TycoonView)
+local TycoonNavigation = require(Server.TycoonService.TycoonNavigationService)
+local RevenueService = require(Server.ConfigurationService.RevenueService)
+local AutoServiceManager = require(Server.AutoService.CarAutoServiceManager)
+local CarManagerService = require(Server.ConfigurationService.CarManagerService)
+
+local TycoonService = {}
+
+local activeButtons = {} 
+local playerTycoons = {} 
+local playerCooldowns = {}
+
+local BUTTON_TEMPLATE = ReplicatedStorage:WaitForChild("Models"):WaitForChild("PurchaseButtonTemplate"):WaitForChild("PurchaseButton")
+local PlayPurchaseSound = ReplicatedStorage:WaitForChild("Events"):WaitForChild("SoundService"):WaitForChild("PlayClientSound")
+
+local COLOR_AFFORDABLE = Color3.fromRGB(0, 255, 127) 
+local COLOR_EXPENSIVE = Color3.fromRGB(255, 85, 85) 
+
+local function getButtonCurrentSettings(buttonId, purchasedLevel)
+	local baseSettings = TycoonConfig.Buttons[buttonId]
+	if not baseSettings then return nil end
+
+	if not purchasedLevel or purchasedLevel == 0 then
+		return baseSettings, false
+	end
+
+	if not baseSettings.Upgrades or #baseSettings.Upgrades == 0 then
+		return nil, true
+	end
+
+	local upgradeIndex = purchasedLevel
+	local maxUpgrades = #baseSettings.Upgrades
+
+	if upgradeIndex > maxUpgrades then
+		return baseSettings.Upgrades[maxUpgrades], true
+	end
+
+	return baseSettings.Upgrades[upgradeIndex], false
+end
+
+local function findModelInStorageByTag(tag)
+	local taggedObjects = CollectionService:GetTagged(tag)
+	for _, obj in ipairs(taggedObjects) do
+		if obj:IsA("Model") and obj:IsDescendantOf(ReplicatedStorage) then
+			return obj
+		end
+	end
+	return nil
+end
+
+local function getMarkerInPlayerTycoon(player, tag)
+	local tycoonModel = playerTycoons[player]
+	if not tycoonModel then return nil end
+
+	local taggedObjects = CollectionService:GetTagged(tag)
+	for _, obj in ipairs(taggedObjects) do
+		if obj:IsA("Model") and obj:IsDescendantOf(tycoonModel) then
+			return obj
+		end
+	end
+	return nil
+end
+
+local function findSpawnPositionPart(Model)
+	return Model:FindFirstChild("SpawnPartPosition") or Model
+end
+
+local function findPurchasePositionPart(Model)
+	return Model:FindFirstChild("PurchasePartPosition") or Model
+end
+
+local function getCurrentAvailableRank(player)
+	local pData = DataService.GetPlayerObject(player)
+	local purchasedList = pData and pData:Get("PurchasedButtons") or {}
+
+	local lowestUnpurchasedRank = math.huge
+
+	for buttonId, settings in pairs(TycoonConfig.Buttons) do
+		local rank = type(settings.LayoutRank) == "number" and settings.LayoutRank or 1
+		local currentLevel = purchasedList[buttonId] or 0
+
+		if currentLevel == 0 then
+			if rank < lowestUnpurchasedRank then
+				lowestUnpurchasedRank = rank
+			end
+		end
+	end
+
+	return lowestUnpurchasedRank
+end
+
+local function getPlayerMoneyDirect(player)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	if leaderstats then
+		local dollarsObject = leaderstats:FindFirstChild("Dollars")
+		if dollarsObject and dollarsObject:IsA("IntValue") then
+			return dollarsObject.Value
+		end
+	end
+	local pData = DataService.GetPlayerObject(player)
+	if pData then return pData:Get("Dollars") or 0 end
+	return 0
+end
+
+local function updateButtonColor(player, touchPart, price)
+	if not touchPart or not touchPart.Parent then return end
+	local currentMoney = getPlayerMoneyDirect(player)
+	if currentMoney >= price then
+		touchPart.Color = COLOR_AFFORDABLE
+	else
+		touchPart.Color = COLOR_EXPENSIVE
+	end
+end
+
+local function updateAllPlayerButtonsColors(player)
+	local buttons = activeButtons[player]
+	if not buttons then return end
+
+	for i = #buttons, 1, -1 do
+		local btnData = buttons[i]
+		if btnData.TouchPart and btnData.TouchPart.Parent then
+			updateButtonColor(player, btnData.TouchPart, btnData.Price)
+		else
+			table.remove(buttons, i)
+		end
+	end
+end
+
+local function assignTycoon(player)
+	local tycoonsFolder = Workspace:FindFirstChild("Tycoons")
+	if not tycoonsFolder then
+		warn("[TycoonService]: Folder 'Tycoons' not found in Workspace!")
+		return nil
+	end
+
+	for _, tycoon in ipairs(tycoonsFolder:GetChildren()) do
+		local isOccupied = false
+		for _, assignedTycoon in pairs(playerTycoons) do
+			if assignedTycoon == tycoon then isOccupied = true break end
+		end
+
+		if not isOccupied then
+			playerTycoons[player] = tycoon
+			tycoon.Name = player.Name .. "_Tycoon"
+			print(string.format("[TycoonService]: Assigned %s to player %s", tycoon.Name, player.Name))
+			return tycoon
+		end
+	end
+
+	warn(string.format("[TycoonService]: No free tycoons available for %s!", player.Name))
+	return nil
+end
+
+local function checkAndActivateModelLogic(player, spawnedModel)
+	RevenueService.Init(player, spawnedModel)
+	AutoServiceManager.InitService(player, spawnedModel)
+
+	if CarManagerService and CarManagerService.Process then
+		task.spawn(function()
+			CarManagerService.Process(player, spawnedModel)
+		end)
+	end
+end
+
+local function spawnButton(player, buttonId, currentLevel)
+	local baseSettings = TycoonConfig.Buttons[buttonId]
+	local currentSettings, isMaxed = getButtonCurrentSettings(buttonId, currentLevel)
+
+	if isMaxed or not currentSettings then return nil end
+
+	local markerModel = getMarkerInPlayerTycoon(player, baseSettings.MarkerTag)
+	if not markerModel then return nil end
+
+	local purchasePosPart = findPurchasePositionPart(markerModel)
+	local spawnPosPart = findSpawnPositionPart(markerModel)
+
+	local newButton = BUTTON_TEMPLATE:Clone()
+	newButton.Name = buttonId
+	newButton:PivotTo(purchasePosPart.CFrame)
+	newButton.Parent = playerTycoons[player] or Workspace
+
+	local touchPart = newButton:FindFirstChild("TouchPart")
+	if touchPart and touchPart:IsA("BasePart") then
+		TycoonView.CreateBillboard(touchPart, currentSettings.Price, currentSettings.DisplayName or buttonId)
+		updateButtonColor(player, touchPart, currentSettings.Price)
+
+		if not activeButtons[player] then activeButtons[player] = {} end
+		table.insert(activeButtons[player], {
+			TouchPart = touchPart,
+			Price = currentSettings.Price
+		})
+
+		touchPart.Touched:Connect(function(hit)
+			local lastPurchase = playerCooldowns[player] or 0
+			if os.clock() - lastPurchase < 1 then 
+				return 
+			end
+
+			local character = hit.Parent
+			local hitPlayer = Players:GetPlayerFromCharacter(character)
+
+			if hitPlayer and hitPlayer == player then
+				playerCooldowns[player] = os.clock()
+
+				local success = TycoonService.ProcessPurchase(player, buttonId, newButton, spawnPosPart)
+
+				if not success then
+					playerCooldowns[player] = 0
+				end
+			end
+		end)
+	end
+
+	return touchPart
+end
+
+function TycoonService.CheckAndSpawnAvailableButtons(player)
+	local pData = DataService.GetPlayerObject(player)
+	local purchasedList = pData and pData:Get("PurchasedButtons") or {}
+
+	local totalPurchasedCount = 0
+	for _, level in pairs(purchasedList) do
+		if level > 0 then
+			totalPurchasedCount = totalPurchasedCount + level
+		end
+	end
+
+	local targetRank = getCurrentAvailableRank(player)
+	local tycoonModel = playerTycoons[player]
+	if not tycoonModel then return end
+
+	for _, child in ipairs(tycoonModel:GetChildren()) do
+		if TycoonConfig.Buttons[child.Name] then
+			child:Destroy()
+		end
+	end
+	if activeButtons[player] then table.clear(activeButtons[player]) end
+
+	local firstSpawnedTouchPart = nil
+
+	for buttonId, settings in pairs(TycoonConfig.Buttons) do
+		local currentLevel = purchasedList[buttonId] or 0
+		local _, isMaxed = getButtonCurrentSettings(buttonId, currentLevel)
+
+		if not isMaxed then
+			if settings.LayoutRank == targetRank or currentLevel > 0 then
+				local touchPart = spawnButton(player, buttonId, currentLevel)
+				if touchPart and not firstSpawnedTouchPart then
+					firstSpawnedTouchPart = touchPart
+				end
+			end
+		end
+	end
+
+	if firstSpawnedTouchPart and totalPurchasedCount == 0 then
+		TycoonNavigation.UpdateBeam(player, firstSpawnedTouchPart)
+	else
+		TycoonNavigation.ClearBeam(player)
+	end
+end
+
+local function spawnPurchasedModel(player, buttonId, currentSettings, markerPart)
+	local targetObjectTag = currentSettings.TargetObject
+	local tycoonModel = playerTycoons[player]
+	if not tycoonModel then return false end
+
+	local modelTemplate = findModelInStorageByTag(targetObjectTag)
+	if not modelTemplate then 
+		warn("[TycoonService]: Target model with tag " .. targetObjectTag .. " not found in storage!")
+		return false 
+	end
+
+	local targetCFrame = markerPart.CFrame
+	local baseSettings = TycoonConfig.Buttons[buttonId]
+	local modelNameInTycoon = "Built_" .. baseSettings.MarkerTag
+
+	local existingUpgrade = tycoonModel:FindFirstChild(modelNameInTycoon)
+	if existingUpgrade then existingUpgrade:Destroy() end
+
+	local clonedModel = modelTemplate:Clone()
+	clonedModel.Name = modelNameInTycoon
+
+	local primaryPart = clonedModel.PrimaryPart
+	if not primaryPart then
+		warn("[TycoonService]: Model with tag " .. targetObjectTag .. " is missing a PrimaryPart! Instant fallback applied.")
+		clonedModel:PivotTo(targetCFrame)
+		clonedModel.Parent = tycoonModel
+		checkAndActivateModelLogic(player, clonedModel)
+		return true
+	end
+
+	local originalStates = {}
+	local welds = {}
+
+	for _, part in ipairs(clonedModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			originalStates[part] = {
+				Transparency = part.Transparency,
+				CanCollide = part.CanCollide,
+				Anchored = part.Anchored
+			}
+			part.Transparency = 1
+			part.CanCollide = false
+
+			if part ~= primaryPart then
+				part.Anchored = false
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = primaryPart
+				weld.Part1 = part
+				weld.Parent = primaryPart
+				table.insert(welds, weld)
+			else
+				part.Anchored = true
+			end
+		end
+	end
+
+	clonedModel:PivotTo(targetCFrame * CFrame.new(0, 15, 0))
+	clonedModel.Parent = tycoonModel
+
+	local moveTween = TweenService:Create(primaryPart, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = targetCFrame})
+	moveTween:Play()
+
+	for part, state in pairs(originalStates) do
+		TweenService:Create(part, TweenInfo.new(0.4), {Transparency = state.Transparency}):Play()	
+	end
+
+	moveTween.Completed:Connect(function()
+		for _, weld in ipairs(welds) do weld:Destroy() end
+		for part, state in pairs(originalStates) do
+			if part and part.Parent then
+				part.Anchored = state.Anchored
+				part.CanCollide = state.CanCollide
+			end
+		end
+		print(string.format("[TycoonService]: Successfully spawned object with tag %s for %s", targetObjectTag, player.Name))
+
+		checkAndActivateModelLogic(player, clonedModel)
+	end)
+
+	return true
+end
+
+function TycoonService.ProcessPurchase(player, buttonId, buttonModel, markerPart)
+	local pData = DataService.GetPlayerObject(player)
+	local purchasedList = pData and pData:Get("PurchasedButtons") or {}
+	local currentLevel = purchasedList[buttonId] or 0
+
+	local currentSettings, isMaxed = getButtonCurrentSettings(buttonId, currentLevel)
+	if isMaxed or not currentSettings then return false end
+
+	local price = currentSettings.Price or 0
+	local currentMoney = getPlayerMoneyDirect(player)
+
+	if currentMoney >= price then
+		PlayPurchaseSound:FireClient(player, "Purchase")
+
+		local success = spawnPurchasedModel(player, buttonId, currentSettings, markerPart)
+		if success then
+			if pData then
+				pData:Add("Dollars", -price)
+				pData:SetButtonPurchased(buttonId)
+			end
+
+			TycoonNavigation.ClearBeam(player)
+			TycoonService.CheckAndSpawnAvailableButtons(player)
+			return true
+		end
+	end
+	return false
+end
+
+local function hookMoneyChanged(player)
+	local leaderstats = player:WaitForChild("leaderstats", 10)
+	if leaderstats then
+		local dollars = leaderstats:WaitForChild("Dollars", 10)
+		if dollars and dollars:IsA("IntValue") then
+			dollars.Changed:Connect(function() 
+				updateAllPlayerButtonsColors(player) 
+				AutoServiceManager.UpdatePlayerButtonsColors(player)
+			end)
+		end
+	end
+end
+
+local function hideAllMapMarkers()
+	local tycoonsFolder = Workspace:FindFirstChild("Tycoons")
+	if not tycoonsFolder then return end
+
+	for _, tycoon in ipairs(tycoonsFolder:GetChildren()) do
+		for _, settings in pairs(TycoonConfig.Buttons) do
+			local taggedObjects = CollectionService:GetTagged(settings.MarkerTag)
+
+			for _, marker in ipairs(taggedObjects) do
+				if marker:IsDescendantOf(tycoon) then
+
+					if marker:IsA("Model") then
+						for _, descendant in ipairs(marker:GetDescendants()) do
+							if descendant:IsA("BasePart") then
+								descendant.Transparency = 1
+								descendant.CanCollide = false
+							end
+						end
+					elseif marker:IsA("BasePart") then
+						marker.Transparency = 1
+						marker.CanCollide = false
+					end
+
+				end
+			end
+		end
+	end
+end
+
+function TycoonService.Init()
+	hideAllMapMarkers()
+
+	local function setupPlayerTycoonLogic(player)
+		local pData = nil
+		local retries = 0
+		while not pData and retries < 20 do
+			pData = DataService.GetPlayerObject(player)
+			if not pData then task.wait(0.2) end
+			retries = retries + 1
+		end
+
+		if not pData then 
+			warn("[TycoonService]: Failed to load player data object for tycoon loading: " .. player.Name)
+			return 
+		end
+		activeButtons[player] = {}
+		playerCooldowns[player] = 0
+
+		local tycoon = assignTycoon(player)
+		if not tycoon then return end
+
+		local purchasedList = pData:Get("PurchasedButtons") or {}
+
+		for buttonId, baseSettings in pairs(TycoonConfig.Buttons) do
+			local level = purchasedList[buttonId] or 0
+			if level > 0 then
+				local activeSettings = baseSettings
+				if baseSettings.Upgrades and level > 1 then
+					local upgIndex = math.min(level - 1, #baseSettings.Upgrades)
+					activeSettings = baseSettings.Upgrades[upgIndex]
+				end
+
+				local Model = getMarkerInPlayerTycoon(player, baseSettings.MarkerTag)
+				local markerPart = findSpawnPositionPart(Model)
+
+				if markerPart then
+					local modelTemplate = findModelInStorageByTag(activeSettings.TargetObject)
+					if modelTemplate then
+						local clonedModel = modelTemplate:Clone()
+						clonedModel.Name = "Built_" .. baseSettings.MarkerTag
+						clonedModel:PivotTo(markerPart.CFrame)
+						clonedModel.Parent = tycoon
+
+						checkAndActivateModelLogic(player, clonedModel)
+					end
+				end
+			end
+		end
+
+		local function TP(character)
+			local rootPart = character:WaitForChild("HumanoidRootPart", 5)
+			if not rootPart then return end
+
+			local tycoonModel = playerTycoons[player]
+			if tycoonModel then
+				local spawnPart = tycoonModel:FindFirstChild("PlayerSpawnLocation") or tycoonModel:FindFirstChild("PlayerSpawnLocation", true)
+				if spawnPart and spawnPart:IsA("BasePart") then
+					character:PivotTo(spawnPart.CFrame * CFrame.new(0, 3, 0))
+				else
+					warn(string.format("[TycoonService]: SpawnPlayer part not found in %s", tycoonModel.Name))
+				end
+			end
+
+			task.wait(1) 
+			TycoonService.CheckAndSpawnAvailableButtons(player)
+		end
+
+		if player.Character then
+			TP(player.Character)
+		end
+
+		player.CharacterAdded:Connect(function(character)
+			TP(character)
+		end)
+
+		task.wait(0.5)
+		coroutine.wrap(hookMoneyChanged)(player)
+		TycoonService.CheckAndSpawnAvailableButtons(player)
+	end
+
+	Players.PlayerAdded:Connect(setupPlayerTycoonLogic)
+
+	Players.PlayerRemoving:Connect(function(player)
+		AutoServiceManager.ClearPlayer(player)
+		TycoonNavigation.ClearBeam(player)
+		activeButtons[player] = nil
+		playerCooldowns[player] = nil
+
+		local tycoon = playerTycoons[player]
+		if tycoon then
+			for _, child in ipairs(tycoon:GetChildren()) do
+				if TycoonConfig.Buttons[child.Name] or string.sub(child.Name, 1, 6) == "Built_" then
+					child:Destroy()
+				end
+			end
+			tycoon.Name = "Free_Tycoon"
+			playerTycoons[player] = nil
+		end
+	end)
+
+	for _, player in ipairs(Players:GetPlayers()) do task.spawn(setupPlayerTycoonLogic, player) end
+	print("[TycoonService]: Multi-player isolated Tycoon system successfully initialized!")
+end
+
+return TycoonService
