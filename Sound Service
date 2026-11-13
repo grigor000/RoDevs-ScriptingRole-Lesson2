@@ -1,0 +1,59 @@
+local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local SoundManager = {}
+SoundManager._cachedSounds = {}
+SoundManager._initialized = false
+
+local Sounds = {
+	["Purchase"] = "rbxassetid://134952684776633",
+	["Earn"] = "rbxassetid://125306887775034"
+}
+
+local function getOrCreateSound(soundName, volume)
+	if SoundManager._cachedSounds[soundName] then
+		local sound = SoundManager._cachedSounds[soundName]
+		sound.Volume = volume or 0.5
+		return sound
+	end
+
+	local assetId = Sounds[soundName]
+	if not assetId then
+		warn("[SoundManager]: Sound ID not found for: " .. tostring(soundName))
+		return nil
+	end
+
+	local soundInstance = Instance.new("Sound")
+	soundInstance.Name = "ClientSound_" .. soundName
+	soundInstance.SoundId = assetId
+	soundInstance.Volume = volume or 0.5
+	soundInstance.Parent = SoundService
+
+	SoundManager._cachedSounds[soundName] = soundInstance
+	return soundInstance
+end
+
+function SoundManager.Play(soundName, volume)
+	local sound = getOrCreateSound(soundName, volume)
+	if sound then
+		if sound.IsPlaying then 
+			sound:Stop() 
+		end
+		sound:Play()
+	end
+end
+
+function SoundManager.Init()
+	if SoundManager._initialized then return end
+	SoundManager._initialized = true
+
+	local PlayPurchaseSound = ReplicatedStorage:WaitForChild("Events"):WaitForChild("SoundService"):WaitForChild("PlayClientSound")
+	
+	PlayPurchaseSound.OnClientEvent:Connect(function(sound)
+		SoundManager.Play(sound, 0.6)
+	end)
+
+	print("[SoundManager]: Client service successfully initialized and listening to events.")
+end
+
+return SoundManager
