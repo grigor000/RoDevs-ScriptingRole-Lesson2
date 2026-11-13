@@ -1,0 +1,35 @@
+local CarSettingsConfig = {}
+
+CarSettingsConfig.GlobalSettings = {
+	BaseServiceTime = 1,
+	MinSpawnDelay = 8,   
+	MaxSpawnDelay = 15,    
+}
+
+CarSettingsConfig.PumpLevelMultipliers = {
+	[1] = 1.0,  
+	[2] = 1.5,  
+	[3] = 2.2,  
+	[4] = 3.2, 
+}
+
+CarSettingsConfig.PumpSpawnDelayMultipliers = {
+	[1] = 1.0, 
+	[2] = 0.85, 
+	[3] = 0.7,  
+	[4] = 0.55,  
+}
+
+CarSettingsConfig.Cars = {
+	["Car"]    = {SpawnChance = 75, BaseReward = 150},  
+	["Pickup"] = {SpawnChance = 50, BaseReward = 250},  
+	["Jeep"]   = {SpawnChance = 40, BaseReward = 300},  
+	["Truck"]  = {SpawnChance = 15, BaseReward = 500},  
+	["Bus"]    = {SpawnChance = 5,  BaseReward = 1000}, 
+}
+
+function CarSettingsConfig.GetCarData(carName)
+	return CarSettingsConfig.Cars[carName] or CarSettingsConfig.Cars["Default"]
+end
+
+return CarSettingsConfig
