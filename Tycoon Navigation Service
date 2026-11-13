@@ -1,0 +1,56 @@
+local TycoonNavigationService = {}
+local playerBeams = {}
+
+function TycoonNavigationService.ClearBeam(player)
+	if playerBeams[player] then
+		if playerBeams[player].Beam then playerBeams[player].Beam:Destroy() end
+		if playerBeams[player].TargetAttachment then playerBeams[player].TargetAttachment:Destroy() end
+		playerBeams[player] = nil
+	end
+end
+
+function TycoonNavigationService.UpdateBeam(player, targetPart)
+	TycoonNavigationService.ClearBeam(player)
+
+	if not targetPart or not targetPart.Parent then return end
+
+	local character = player.Character
+	if not character then return end
+
+	local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart")
+	if not torso then return end
+
+	local playerAttachment = torso:FindFirstChild("PlayerBeamAttachment")
+	if not playerAttachment then
+		playerAttachment = Instance.new("Attachment")
+		playerAttachment.Name = "PlayerBeamAttachment"
+		playerAttachment.Parent = torso
+	end
+
+	local targetAttachment = Instance.new("Attachment")
+	targetAttachment.Name = "ButtonBeamAttachment"
+	targetAttachment.Parent = targetPart
+
+	local beam = Instance.new("Beam")
+	beam.Name = "NavigationBeam"
+	beam.Attachment0 = targetAttachment
+	beam.Attachment1 = playerAttachment
+
+	beam.Color = ColorSequence.new(Color3.fromRGB(0, 255, 255))
+	beam.LightEmission = 0
+	beam.LightInfluence = 1
+	beam.TextureSpeed = -2
+	beam.TextureLength = 15
+	beam.Width0 = 2
+	beam.Width1 = 2	
+	beam.TextureMode = Enum.TextureMode.Stretch
+	beam.FaceCamera = true
+	beam.Parent = character
+
+	playerBeams[player] = {
+		Beam = beam,
+		TargetAttachment = targetAttachment
+	}
+end
+
+return TycoonNavigationService
