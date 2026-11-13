@@ -1,0 +1,90 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local SyncCarState = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CarService"):WaitForChild("SyncCarService")
+
+local ClientCarView = {}
+
+local function getCarPartsAndStates(carModel)
+	local parts = {}
+	for _, part in ipairs(carModel:GetDescendants()) do
+		if part:IsA("BasePart") or part:IsA("Decal") or part:IsA("Texture") then
+			local original = part:GetAttribute("OriginalTransparency")
+			if not original then
+				original = part.Transparency
+				part:SetAttribute("OriginalTransparency", original)
+			end
+			table.insert(parts, {
+				Instance = part,
+				Type = "Visual",
+				TargetTransparency = original
+			})
+		elseif part:IsA("TextLabel") then
+			local original = part:GetAttribute("OriginalTextTransparency")
+			if not original then
+				original = part.TextTransparency
+				part:SetAttribute("OriginalTextTransparency", original)
+			end
+			table.insert(parts, {
+				Instance = part,
+				Type = "Text",
+				TargetTransparency = original
+			})
+		elseif part:IsA("SurfaceGui") then
+			part.AlwaysOnTop = false
+		end
+	end
+	return parts
+end
+
+local function tweenCarTransparency(partsData, duration, fadeIn)
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+	for _, data in ipairs(partsData) do
+		if data.Instance and data.Instance.Parent then
+			if data.Type == "Visual" then
+				local startTrans = fadeIn and 1 or data.Instance.Transparency
+				local endTrans = fadeIn and data.TargetTransparency or 1
+				data.Instance.Transparency = startTrans
+				TweenService:Create(data.Instance, info, {Transparency = endTrans}):Play()
+			elseif data.Type == "Text" then
+				local startTrans = fadeIn and 1 or data.Instance.TextTransparency
+				local endTrans = fadeIn and data.TargetTransparency or 1
+				data.Instance.TextTransparency = startTrans
+				TweenService:Create(data.Instance, info, {TextTransparency = endTrans}):Play()
+			end
+		end
+	end
+end
+
+function ClientCarView.Init()
+	SyncCarState.OnClientEvent:Connect(function(carModel, state, targetPart)
+		if not carModel or not carModel.PrimaryPart or not targetPart then return end
+
+		local carParts = getCarPartsAndStates(carModel)
+
+		if state == "SpawnToQueue" then
+			for _, data in ipairs(carParts) do
+				if data.Type == "Visual" then
+					data.Instance.Transparency = 1
+				elseif data.Type == "Text" then
+					data.Instance.TextTransparency = 1
+				end
+			end
+
+			task.spawn(tweenCarTransparency, carParts, 1.5, true)
+
+			local tweenInfo = TweenInfo.new(1.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			TweenService:Create(carModel.PrimaryPart, tweenInfo, {CFrame = targetPart.CFrame}):Play()
+
+		elseif state == "DespawnToEnd" then
+			task.spawn(tweenCarTransparency, carParts, 1.5, false)
+
+			local tweenInfo = TweenInfo.new(1.75, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			TweenService:Create(carModel.PrimaryPart, tweenInfo, {CFrame = targetPart.CFrame}):Play()
+		end
+	end)
+
+	print("[ClientCarView] Service successfully initialized.")
+end
+
+return ClientCarView
