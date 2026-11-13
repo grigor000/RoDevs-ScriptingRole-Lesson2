@@ -1,0 +1,75 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ToggleSprint = ReplicatedStorage:WaitForChild("Events"):WaitForChild("PlayerSpeedService"):WaitForChild("ToggleSprint")
+
+local SpeedService = {}
+SpeedService.__index = SpeedService
+
+local BASE_SPEED = 16
+local SPRINT_BONUS = 20
+local SPEED_PER_LVL = 2
+
+local playerData = {}
+
+function SpeedService.Init()
+	Players.PlayerAdded:Connect(function(player)
+		playerData[player.UserId] = {
+			Lvl = 0,
+			IsSprinting = false
+		}
+
+		player.CharacterAdded:Connect(function(character)
+			local humanoid = character:WaitForChild("Humanoid")
+			humanoid.WalkSpeed = SpeedService.GetWalkSpeed(player)
+		end)
+	end)
+
+	Players.PlayerRemoving:Connect(function(player)
+		playerData[player.UserId] = nil
+	end)
+
+	ToggleSprint.OnServerEvent:Connect(function(player, startSprint)
+		SpeedService.SetSprinting(player, startSprint)
+	end)
+end
+
+function SpeedService.GetWalkSpeed(player: Player): number
+	local data = playerData[player.UserId]
+	if not data then return BASE_SPEED end
+
+	return BASE_SPEED + (data.Lvl * SPEED_PER_LVL)
+end
+
+function SpeedService.GetSprintSpeed(player: Player): number
+	return SpeedService.GetWalkSpeed(player) + SPRINT_BONUS
+end
+
+function SpeedService.UpgradeSpeed(player: Player): boolean
+	local data = playerData[player.UserId]
+	if not data then return false end
+
+	data.Lvl += 1
+
+	local character = player.Character
+	local humanoid = character and character:FindFirstChild("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = data.IsSprinting and SpeedService.GetSprintSpeed(player) or SpeedService.GetWalkSpeed(player)
+	end
+
+	return true
+end
+
+function SpeedService.SetSprinting(player: Player, startSprint: boolean)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	local character = player.Character
+	local humanoid = character and character:FindFirstChild("Humanoid")
+	if not humanoid then return end
+
+	data.IsSprinting = startSprint
+	humanoid.WalkSpeed = startSprint and SpeedService.GetSprintSpeed(player) or SpeedService.GetWalkSpeed(player)
+end
+
+return SpeedService
