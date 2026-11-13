@@ -1,0 +1,139 @@
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local PlayerDataStore = DataStoreService:GetDataStore("Production_SaveSystem_v86")
+local StatConfig = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Server"):WaitForChild("PlayerDataService"):WaitForChild("PlayerStatService"))
+
+local PlayerData = {}
+PlayerData.__index = PlayerData
+
+local function deepCopy(original)
+	local copy = {}
+	for k, v in pairs(original) do
+		if type(v) == "table" then
+			copy[k] = deepCopy(v)
+		else
+			copy[k] = v
+		end
+	end
+	return copy
+end
+
+function PlayerData.new(player)
+	local self = setmetatable({}, PlayerData)
+
+	self.Player = player
+	self.Data = deepCopy(StatConfig.Template)
+	self._isSaving = false
+
+	if RunService:IsServer() then
+		self:_loadData()
+		self:_createLeaderstats()
+	end
+
+	return self
+end
+
+function PlayerData:_loadData()
+	local userId = self.Player.UserId
+	local key = "Player_" .. userId
+
+	local success, savedData = pcall(function()
+		return PlayerDataStore:GetAsync(key)
+	end)
+
+	if success and savedData and type(savedData) == "table" then
+		for key, value in pairs(savedData) do
+			if self.Data[key] ~= nil then
+				self.Data[key] = value
+			end
+		end
+		print("[SaveSystem]: Data for player " .. self.Player.Name .. " successfully loaded.")
+	else
+		if not success then
+			warn("[SaveSystem]: Error loading data for " .. self.Player.Name .. ": " .. tostring(savedData))
+		else
+			print("[SaveSystem]: New profile created for " .. self.Player.Name)
+		end
+	end
+end
+
+function PlayerData:SaveData()
+	if not RunService:IsServer() then return end
+	if not self.Player or not self.Data then return end
+	if self._isSaving then return end
+
+	self._isSaving = true
+	local userId = self.Player.UserId
+	local key = "Player_" .. userId
+
+	local success, err = pcall(function()
+		PlayerDataStore:SetAsync(key, self.Data)
+	end)
+
+	if success then
+		print("[SaveSystem]: Data for player " .. self.Player.Name .. " successfully saved.")
+	else
+		warn("[SaveSystem]: Critical error saving data for " .. self.Player.Name .. ": " .. tostring(err))
+	end
+
+	self._isSaving = false
+end
+
+function PlayerData:_createLeaderstats()
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	leaderstats.Parent = self.Player
+
+	for statName, value in pairs(self.Data) do
+		if type(value) ~= "table" then
+			local intValue = Instance.new("IntValue")
+			intValue.Name = statName
+			intValue.Value = value
+			intValue.Parent = leaderstats
+
+			intValue.Changed:Connect(function(newValue)
+				self.Data[statName] = newValue
+			end)
+		end
+	end
+end
+
+function PlayerData:Get(statName)
+	return self.Data[statName]
+end
+
+function PlayerData:Add(statName, amount)
+	if not RunService:IsServer() then return end
+
+	if self.Data[statName] ~= nil and type(self.Data[statName]) ~= "table" then
+		self.Data[statName] = self.Data[statName] + amount
+
+		local leaderstats = self.Player:FindFirstChild("leaderstats")
+		if leaderstats then
+			local statObject = leaderstats:FindFirstChild(statName)
+			if statObject then
+				statObject.Value = self.Data[statName]
+			end
+		end
+	end
+end
+
+function PlayerData:SetButtonPurchased(buttonId)
+	if self.Data["PurchasedButtons"] then
+		local currentLevel = self.Data["PurchasedButtons"][buttonId] or 0
+		if type(currentLevel) == "boolean" then currentLevel = 1 end
+
+		self.Data["PurchasedButtons"][buttonId] = currentLevel + 1
+	end
+end
+
+function PlayerData:Destroy()
+	self:SaveData()
+	task.wait(0.1)
+	self.Data = nil
+	self.Player = nil
+end
+
+return PlayerData
